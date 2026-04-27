@@ -67,6 +67,9 @@ pub mod index_fund;
 // Bonding curves
 pub mod bonding_curve;
 
+// Retroactive public goods funding
+pub mod retroactive_funding;
+
 // TWAP oracle
 pub mod twap_oracle;
 
@@ -8214,6 +8217,118 @@ a
     /// Get LP share value as `(token_a_per_share, token_b_per_share)` × 1_000_000.
     pub fn amm_share_value(env: Env, pool_id: u64) -> (i128, i128) {
         amm::pricing::share_value(&env, pool_id)
+    }
+
+    // ── Retroactive Public Goods Funding ──────────────────────────────────────
+
+    /// Creates a retroactive funding round. Admin deposits `reward_pool` immediately.
+    ///
+    /// `voting_start` / `voting_end` are unix timestamps bounding the voting window.
+    /// Returns the new round ID.
+    /// Emits `("rf_new",)` with data `(round_id, admin, token, reward_pool)`.
+    pub fn rf_create_round(
+        env: Env,
+        admin: Address,
+        token: Address,
+        reward_pool: i128,
+        criteria: retroactive_funding::EvalCriteria,
+        voting_start: u64,
+        voting_end: u64,
+    ) -> u64 {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        let whitelisted: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenWhitelist(token.clone()))
+            .unwrap_or(false);
+        if !whitelisted {
+            panic_with_error!(&env, TipJarError::TokenNotWhitelisted);
+        }
+        retroactive_funding::create_round(
+            &env, &admin, &token, reward_pool, criteria, voting_start, voting_end,
+        )
+    }
+
+    /// Nominates a project for a round with its impact metrics.
+    ///
+    /// Eligibility is checked against the round's `EvalCriteria`.
+    /// Emits `("rf_nom",)` with data `(round_id, project, tip_volume, unique_tippers)`.
+    pub fn rf_nominate_project(
+        env: Env,
+        round_id: u64,
+        project: Address,
+        tip_volume: i128,
+        unique_tippers: u32,
+        impact_description: soroban_sdk::String,
+    ) {
+        Self::require_not_paused(&env);
+        retroactive_funding::nominate_project(
+            &env,
+            round_id,
+            &project,
+            tip_volume,
+            unique_tippers,
+            impact_description,
+        );
+    }
+
+    /// Opens the voting window. Admin only.
+    ///
+    /// Emits `("rf_vote",)` with data `(round_id,)`.
+    pub fn rf_open_voting(env: Env, admin: Address, round_id: u64) {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        retroactive_funding::open_voting(&env, &admin, round_id);
+    }
+
+    /// Casts `weight` votes for `project` in `round_id`. One vote per voter per round.
+    ///
+    /// Emits `("rf_cast",)` with data `(round_id, voter, project, weight)`.
+    pub fn rf_cast_vote(
+        env: Env,
+        voter: Address,
+        round_id: u64,
+        project: Address,
+        weight: i128,
+    ) {
+        Self::require_not_paused(&env);
+        voter.require_auth();
+        retroactive_funding::cast_vote(&env, &voter, round_id, &project, weight);
+    }
+
+    /// Finalizes the round and distributes rewards proportionally to votes received.
+    ///
+    /// Admin only; voting window must have ended.
+    /// Emits `("rf_dist",)` per project and `("rf_done",)` on completion.
+    pub fn rf_finalize_and_distribute(env: Env, admin: Address, round_id: u64) {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        retroactive_funding::finalize_and_distribute(&env, &admin, round_id);
+    }
+
+    /// Returns the round record, or `None` if not found.
+    pub fn rf_get_round(env: Env, round_id: u64) -> Option<retroactive_funding::RetroRound> {
+        retroactive_funding::get_round(&env, round_id)
+    }
+
+    /// Returns the project record for a given round and project address.
+    pub fn rf_get_project(
+        env: Env,
+        round_id: u64,
+        project: Address,
+    ) -> Option<retroactive_funding::ProjectRecord> {
+        retroactive_funding::get_project(&env, round_id, &project)
+    }
+
+    /// Returns all nominated project addresses for a round.
+    pub fn rf_get_round_projects(env: Env, round_id: u64) -> soroban_sdk::Vec<Address> {
+        retroactive_funding::get_round_projects(&env, round_id)
+    }
+
+    /// Returns `true` if `voter` has already voted in `round_id`.
+    pub fn rf_has_voted(env: Env, round_id: u64, voter: Address) -> bool {
+        retroactive_funding::has_voted(&env, round_id, &voter)
     }
 }
 

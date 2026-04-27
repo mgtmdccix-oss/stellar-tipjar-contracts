@@ -74,3 +74,7 @@ path = "tests/bonding_curve_tests.rs"
 name = "twap_oracle_tests"
 path = "tests/twap_oracle_tests.rs"
 
+[[test]]
+name = "retroactive_funding_tests"
+path = "tests/retroactive_funding_tests.rs"
+
