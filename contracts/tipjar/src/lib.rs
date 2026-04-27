@@ -67,8 +67,8 @@ pub mod index_fund;
 // Bonding curves
 pub mod bonding_curve;
 
-// Retroactive public goods funding
-pub mod retroactive_funding;
+// Quadratic funding
+pub mod quadratic_funding;
 
 // TWAP oracle
 pub mod twap_oracle;
@@ -8219,21 +8219,21 @@ a
         amm::pricing::share_value(&env, pool_id)
     }
 
-    // ── Retroactive Public Goods Funding ──────────────────────────────────────
+    // ── Quadratic Funding ─────────────────────────────────────────────────────
 
-    /// Creates a retroactive funding round. Admin deposits `reward_pool` immediately.
+    /// Creates a new quadratic funding round.
     ///
-    /// `voting_start` / `voting_end` are unix timestamps bounding the voting window.
+    /// `admin` deposits `matching_pool` tokens immediately into escrow.
+    /// The round accepts contributions for `duration_seconds` seconds.
     /// Returns the new round ID.
-    /// Emits `("rf_new",)` with data `(round_id, admin, token, reward_pool)`.
-    pub fn rf_create_round(
+    ///
+    /// Emits `("qf_new",)` with data `(round_id, admin, token, matching_pool)`.
+    pub fn qf_create_round(
         env: Env,
         admin: Address,
         token: Address,
-        reward_pool: i128,
-        criteria: retroactive_funding::EvalCriteria,
-        voting_start: u64,
-        voting_end: u64,
+        matching_pool: i128,
+        duration_seconds: u64,
     ) -> u64 {
         Self::require_not_paused(&env);
         admin.require_auth();
@@ -8245,90 +8245,63 @@ a
         if !whitelisted {
             panic_with_error!(&env, TipJarError::TokenNotWhitelisted);
         }
-        retroactive_funding::create_round(
-            &env, &admin, &token, reward_pool, criteria, voting_start, voting_end,
-        )
+        quadratic_funding::create_round(&env, &admin, &token, matching_pool, duration_seconds)
     }
 
-    /// Nominates a project for a round with its impact metrics.
+    /// Contributes `amount` of the round's token to `project` in `round_id`.
     ///
-    /// Eligibility is checked against the round's `EvalCriteria`.
-    /// Emits `("rf_nom",)` with data `(round_id, project, tip_volume, unique_tippers)`.
-    pub fn rf_nominate_project(
+    /// Each address may contribute at most once per project per round (Sybil resistance).
+    /// Emits `("qf_con",)` with data `(round_id, contributor, project, amount)`.
+    pub fn qf_contribute(
         env: Env,
+        contributor: Address,
         round_id: u64,
         project: Address,
-        tip_volume: i128,
-        unique_tippers: u32,
-        impact_description: soroban_sdk::String,
+        amount: i128,
     ) {
         Self::require_not_paused(&env);
-        retroactive_funding::nominate_project(
-            &env,
-            round_id,
-            &project,
-            tip_volume,
-            unique_tippers,
-            impact_description,
-        );
+        contributor.require_auth();
+        quadratic_funding::contribute(&env, &contributor, round_id, &project, amount);
     }
 
-    /// Opens the voting window. Admin only.
+    /// Finalizes a round after its end time. Admin only.
     ///
-    /// Emits `("rf_vote",)` with data `(round_id,)`.
-    pub fn rf_open_voting(env: Env, admin: Address, round_id: u64) {
+    /// Emits `("qf_fin",)` with data `(round_id,)`.
+    pub fn qf_finalize_round(env: Env, admin: Address, round_id: u64) {
         Self::require_not_paused(&env);
         admin.require_auth();
-        retroactive_funding::open_voting(&env, &admin, round_id);
+        quadratic_funding::finalize_round(&env, &admin, round_id);
     }
 
-    /// Casts `weight` votes for `project` in `round_id`. One vote per voter per round.
+    /// Distributes matching funds to projects and returns contributions to donors.
     ///
-    /// Emits `("rf_cast",)` with data `(round_id, voter, project, weight)`.
-    pub fn rf_cast_vote(
-        env: Env,
-        voter: Address,
-        round_id: u64,
-        project: Address,
-        weight: i128,
-    ) {
-        Self::require_not_paused(&env);
-        voter.require_auth();
-        retroactive_funding::cast_vote(&env, &voter, round_id, &project, weight);
-    }
-
-    /// Finalizes the round and distributes rewards proportionally to votes received.
-    ///
-    /// Admin only; voting window must have ended.
-    /// Emits `("rf_dist",)` per project and `("rf_done",)` on completion.
-    pub fn rf_finalize_and_distribute(env: Env, admin: Address, round_id: u64) {
+    /// Uses the quadratic formula: each project's share ∝ (Σ√contribution_i)².
+    /// Admin only; round must be Finalized.
+    /// Emits `("qf_dist",)` per project and `("qf_done",)` on completion.
+    pub fn qf_distribute_matching(env: Env, admin: Address, round_id: u64) {
         Self::require_not_paused(&env);
         admin.require_auth();
-        retroactive_funding::finalize_and_distribute(&env, &admin, round_id);
+        quadratic_funding::distribute_matching(&env, &admin, round_id);
     }
 
-    /// Returns the round record, or `None` if not found.
-    pub fn rf_get_round(env: Env, round_id: u64) -> Option<retroactive_funding::RetroRound> {
-        retroactive_funding::get_round(&env, round_id)
+    /// Returns the funding round record, or `None` if not found.
+    pub fn qf_get_round(env: Env, round_id: u64) -> Option<quadratic_funding::FundingRound> {
+        quadratic_funding::get_round(&env, round_id)
     }
 
-    /// Returns the project record for a given round and project address.
-    pub fn rf_get_project(
+    /// Returns the contribution record for a specific contributor/project/round.
+    pub fn qf_get_contribution(
         env: Env,
         round_id: u64,
         project: Address,
-    ) -> Option<retroactive_funding::ProjectRecord> {
-        retroactive_funding::get_project(&env, round_id, &project)
+        contributor: Address,
+    ) -> Option<quadratic_funding::Contribution> {
+        quadratic_funding::get_contribution(&env, round_id, &project, &contributor)
     }
 
-    /// Returns all nominated project addresses for a round.
-    pub fn rf_get_round_projects(env: Env, round_id: u64) -> soroban_sdk::Vec<Address> {
-        retroactive_funding::get_round_projects(&env, round_id)
-    }
-
-    /// Returns `true` if `voter` has already voted in `round_id`.
-    pub fn rf_has_voted(env: Env, round_id: u64, voter: Address) -> bool {
-        retroactive_funding::has_voted(&env, round_id, &voter)
+    /// Returns the estimated matching amount for `project` in `round_id`.
+    pub fn qf_get_match_estimate(env: Env, round_id: u64, project: Address) -> i128 {
+        quadratic_funding::get_match_estimate(&env, round_id, &project)
     }
 }
 

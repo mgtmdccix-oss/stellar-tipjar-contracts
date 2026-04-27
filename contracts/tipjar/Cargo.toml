@@ -75,6 +75,6 @@ name = "twap_oracle_tests"
 path = "tests/twap_oracle_tests.rs"
 
 [[test]]
-name = "retroactive_funding_tests"
-path = "tests/retroactive_funding_tests.rs"
+name = "quadratic_funding_tests"
+path = "tests/quadratic_funding_tests.rs"
 
